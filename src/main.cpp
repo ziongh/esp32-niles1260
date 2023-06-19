@@ -39,7 +39,6 @@ void setup() {
   // start the light service
   lightMqttSettingsService.begin();
 
-  
   // load the initial light settings
   volumeStateService.begin();
 
