@@ -1,19 +1,21 @@
 import { FC } from 'react';
 
-import { Switch } from '@mui/material';
+import { Stack, Slider } from '@mui/material';
+import VolumeDown from '@mui/icons-material/VolumeDown';
+import VolumeUp from '@mui/icons-material/VolumeUp';
 
 import { WEB_SOCKET_ROOT } from '../api/endpoints';
 import { BlockFormControlLabel, FormLoader, MessageBox, SectionContent } from '../components';
-import { updateValue, useWs } from '../utils';
+import { updateValueDirect, useWs } from '../utils';
 
-import { LightState } from './types';
+import { VolumeState } from './types';
 
-export const LIGHT_SETTINGS_WEBSOCKET_URL = WEB_SOCKET_ROOT + "lightState";
+export const LIGHT_SETTINGS_WEBSOCKET_URL = WEB_SOCKET_ROOT + "volumeState";
 
 const LightStateWebSocketForm: FC = () => {
-  const { connected, updateData, data } = useWs<LightState>(LIGHT_SETTINGS_WEBSOCKET_URL);
+  const { connected, updateData, data } = useWs<VolumeState>(LIGHT_SETTINGS_WEBSOCKET_URL);
 
-  const updateFormValue = updateValue(updateData);
+  const updateFormValue = updateValueDirect(updateData);
 
   const content = () => {
     if (!connected || !data) {
@@ -28,14 +30,20 @@ const LightStateWebSocketForm: FC = () => {
         />
         <BlockFormControlLabel
           control={
-            <Switch
-              name="led_on"
-              checked={data.led_on}
-              onChange={updateFormValue}
-              color="primary"
-            />
+            <Stack spacing={2} direction="row" sx={{ mb: 1 }} alignItems="center">
+              <VolumeDown />
+              <Slider
+                name="volume"
+                aria-label="Volume"
+                value={data.volume}
+                max={100}
+                min={0}
+                onChange={(e, value) => updateFormValue(value as number, 'volume')}
+              />
+              <VolumeUp />
+            </Stack>
           }
-          label="LED State?"
+          label="Volume"
         />
       </>
     );
