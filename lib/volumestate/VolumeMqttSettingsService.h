@@ -21,9 +21,9 @@ class VolumeMqttSettings {
   }
 
   static StateUpdateResult update(JsonObject& root, VolumeMqttSettings& settings) {
-    settings.mqttPath = root["mqtt_path"] | SettingValue::format("homeassistant/volume/#{unique_id}");
-    settings.name = root["name"] | SettingValue::format("volume-#{unique_id}");
-    settings.uniqueId = root["unique_id"] | SettingValue::format("volume-#{unique_id}");
+    settings.mqttPath = SettingValue::format("homeassistant/niles/1260");
+    settings.name = SettingValue::format("niles-1260");
+    settings.uniqueId = SettingValue::format("niles-1260");
     return StateUpdateResult::CHANGED;
   }
 };

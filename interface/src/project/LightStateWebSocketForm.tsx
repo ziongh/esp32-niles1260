@@ -1,4 +1,4 @@
-import { FC } from 'react';
+import { FC, useState } from 'react';
 
 import { Stack, Slider } from '@mui/material';
 import VolumeDown from '@mui/icons-material/VolumeDown';
@@ -10,10 +10,10 @@ import { updateValueDirect, useWs } from '../utils';
 
 import { VolumeState } from './types';
 
-export const LIGHT_SETTINGS_WEBSOCKET_URL = WEB_SOCKET_ROOT + "volumeState";
+export const VOLUME_SETTINGS_WEBSOCKET_URL = WEB_SOCKET_ROOT + "volumeState";
 
 const LightStateWebSocketForm: FC = () => {
-  const { connected, updateData, data } = useWs<VolumeState>(LIGHT_SETTINGS_WEBSOCKET_URL);
+  const { connected, updateData, data } = useWs<VolumeState>(VOLUME_SETTINGS_WEBSOCKET_URL);
 
   const updateFormValue = updateValueDirect(updateData);
 
@@ -23,27 +23,81 @@ const LightStateWebSocketForm: FC = () => {
     }
     return (
       <>
-        <MessageBox
-          level="info"
-          message="The switch below controls the LED via the WebSocket. It will automatically update whenever the LED state changes."
-          my={2}
-        />
         <BlockFormControlLabel
+          style={{width: '100%' }}
           control={
-            <Stack spacing={2} direction="row" sx={{ mb: 1 }} alignItems="center">
+            <Stack style={{width: '100%' }} spacing={2} direction="row" sx={{ mb: 1 }} alignItems="center">
               <VolumeDown />
               <Slider
-                name="volume"
-                aria-label="Volume"
-                value={data.volume}
+                name="volumeSala"
+                aria-label="volumeSala"
                 max={100}
                 min={0}
-                onChange={(e, value) => updateFormValue(value as number, 'volume')}
+                style={{width: '100%' }}
+                onChange={(e, value) => updateFormValue(value as  number, 'volumeSala')}
               />
               <VolumeUp />
             </Stack>
           }
-          label="Volume"
+          label="Volume Sala"
+          labelPlacement='top'
+        />
+        <BlockFormControlLabel
+          style={{width: '100%' }}
+          control={
+            <Stack style={{width: '100%' }} spacing={2} direction="row" sx={{ mb: 1 }} alignItems="center">
+              <VolumeDown />
+              <Slider
+                name="volumeCinema"
+                aria-label="volumeCinema"
+                max={100}
+                min={0}
+                style={{width: '100%' }}
+                onChange={(e, value) => updateFormValue(value as  number, 'volumeCinema')}
+              />
+              <VolumeUp />
+            </Stack>
+          }
+          label="Volume Cinema"
+          labelPlacement='top'
+        />
+        <BlockFormControlLabel
+          style={{width: '100%' }}
+          control={
+            <Stack style={{width: '100%' }} spacing={2} direction="row" sx={{ mb: 1 }} alignItems="center">
+              <VolumeDown />
+              <Slider
+                name="volumeVaranda"
+                aria-label="volumeVaranda"
+                max={100}
+                min={0}
+                style={{width: '100%' }}
+                onChange={(e, value) => updateFormValue(value as  number, 'volumeVaranda')}
+              />
+              <VolumeUp />
+            </Stack>
+          }
+          label="Volume Varanda"
+          labelPlacement='top'
+        />
+        <BlockFormControlLabel
+          style={{width: '100%' }}
+          control={
+            <Stack style={{width: '100%' }} spacing={2} direction="row" sx={{ mb: 1 }} alignItems="center">
+              <VolumeDown />
+              <Slider
+                name="volumeCozinha"
+                aria-label="volumeCozinha"
+                max={100}
+                min={0}
+                style={{width: '100%' }}
+                onChange={(e, value) => updateFormValue(value as  number, 'volumeCozinha')}
+              />
+              <VolumeUp />
+            </Stack>
+          }
+          label="Volume Cozinha"
+          labelPlacement='top'
         />
       </>
     );

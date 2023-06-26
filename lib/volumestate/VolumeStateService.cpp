@@ -1,41 +1,30 @@
 #include <VolumeStateService.h>
 
-// Must specify this before the include of "ServoEasing.hpp"
-#define USE_PCA9685_SERVO_EXPANDER    // Activating this enables the use of the PCA9685 I2C expander chip/board.
-//#define USE_SOFT_I2C_MASTER           // Saves 1756 bytes program memory and 218 bytes RAM compared with Arduino Wire
-//#define USE_SERVO_LIB                 // If USE_PCA9685_SERVO_EXPANDER is defined, Activating this enables force additional using of regular servo library.
-//#define USE_LEIGHTWEIGHT_SERVO_LIB    // Makes the servo pulse generating immune to other libraries blocking interrupts for a longer time like SoftwareSerial, Adafruit_NeoPixel and DmxSimple.
-//#define PROVIDE_ONLY_LINEAR_MOVEMENT  // Activating this disables all but LINEAR movement. Saves up to 1540 bytes program memory.
-#define DISABLE_COMPLEX_FUNCTIONS     // Activating this disables the SINE, CIRCULAR, BACK, ELASTIC, BOUNCE and PRECISION easings. Saves up to 1850 bytes program memory.
-#define MAX_EASING_SERVOS 1
-//#define DISABLE_MICROS_AS_DEGREE_PARAMETER // Activating this disables microsecond values as (target angle) parameter. Saves 128 bytes program memory.
-//#define DISABLE_MIN_AND_MAX_CONSTRAINTS    // Activating this disables constraints. Saves 4 bytes RAM per servo but strangely enough no program memory.
-//#define DISABLE_PAUSE_RESUME               // Activating this disables pause and resume functions. Saves 5 bytes RAM per servo.
-//#define DEBUG                              // Activating this enables generate lots of lovely debug output for this library.
+#include <Wire.h>
+#include <Adafruit_PWMServoDriver.h>
 
-//#define PRINT_FOR_SERIAL_PLOTTER           // Activating this enables generate the Arduino plotter output from ServoEasing.hpp.
-/*
- * Specify which easings types should be available.
- * If no easing is defined, all easings are active.
- * This must be done before the #include "ServoEasing.hpp"
- */
-//#define ENABLE_EASE_QUADRATIC
-#define ENABLE_EASE_CUBIC
-//#define ENABLE_EASE_QUARTIC
-//#define ENABLE_EASE_SINE
-//#define ENABLE_EASE_CIRCULAR
-//#define ENABLE_EASE_BACK
-//#define ENABLE_EASE_ELASTIC
-//#define ENABLE_EASE_BOUNCE
-//#define ENABLE_EASE_PRECISION
-//#define ENABLE_EASE_USER
-#include "ServoEasing.hpp"
 
-#if defined(USE_PCA9685_SERVO_EXPANDER)
-ServoEasing Servo1(PCA9685_DEFAULT_ADDRESS); // If you use more than one PCA9685 you probably must modify MAX_EASING_SERVOS
-#else
-ServoEasing Servo1;
-#endif
+// called this way, it uses the default address 0x40
+Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40, Wire);
+// you can also call it with a different address you want
+//Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x41);
+// you can also call it with a different address and I2C interface
+//Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40, Wire);
+
+// Depending on your servo make, the pulse width min and max may vary, you 
+// want these to be as small/large as possible without hitting the hard stop
+// for max range. You'll have to tweak them as necessary to match the servos you
+// have!
+#define SERVOMIN  150 // This is the 'minimum' pulse length count (out of 4096)
+#define SERVOMAX  600 // This is the 'maximum' pulse length count (out of 4096)
+#define USMIN  600 // This is the rounded 'minimum' microsecond length based on the minimum pulse of 150
+#define USMAX  2400 // This is the rounded 'maximum' microsecond length based on the maximum pulse of 600
+#define SERVO_FREQ 50 // Analog servos run at ~50 Hz updates
+
+
+// our servo # counter
+uint8_t servonum = 0;
+
 #define START_DEGREE_VALUE  0 // The degree value written to the servo at time of attach.
 
 VolumeStateService::VolumeStateService(AsyncWebServer* server,
@@ -59,44 +48,8 @@ VolumeStateService::VolumeStateService(AsyncWebServer* server,
                AuthenticationPredicates::IS_AUTHENTICATED),
     _mqttClient(mqttClient),
     _VolumeMqttSettingsService(VolumeMqttSettingsService) {
-  // configure led to be output
-  pinMode(SERVO1_PIN, OUTPUT);
 
-  /********************************************************
-   * Attach servo to pin and set servos to start position.
-   * This is the position where the movement starts.
-   *******************************************************/
-  #if defined(USE_PCA9685_SERVO_EXPANDER)
-    if (Servo1.InitializeAndCheckI2CConnection(&Serial)) {
-        while (true) {
-          delay(100);
-        }
-    }
-  #endif
-
-  #if !defined(PRINT_FOR_SERIAL_PLOTTER)
-    #if defined(USE_PCA9685_SERVO_EXPANDER)
-      #undef SERVO1_PIN
-      #define SERVO1_PIN  0 // we use first port of expander
-      Serial.println(F("Attach servo to port 0 of PCA9685 expander"));
-    #else
-      Serial.println(F("Attach servo at pin " STR(SERVO1_PIN)));
-    #endif
-  #endif
-  if (Servo1.attach(SERVO1_PIN, START_DEGREE_VALUE) == INVALID_SERVO) {
-      Serial.println(F("Error attaching servo"));
-      while (true) {
-          delay(100);
-      }
-  }
-
-  // Wait for servo to reach start position.
-  delay(500);
-  #if defined(PRINT_FOR_SERIAL_PLOTTER)
-    // Legend for Arduino Serial plotter
-    Serial.println(); // end of line of attach values
-    Serial.println("OneServo[us]_Linear->Cubic->Linear");
-  #endif
+  // Wire.begin(0x40, 22, 21, ); // SDA, SCL
 
   // configure MQTT callback
   _mqttClient->onConnect(std::bind(&VolumeStateService::registerConfig, this));
@@ -109,20 +62,68 @@ VolumeStateService::VolumeStateService(AsyncWebServer* server,
 }
 
 void VolumeStateService::begin() {
-  _state.volume = DEFAULT_VOLUME_STATE;
+  Serial.print(F("starting PWM..."));
+  pwm.begin();
+  
+  Serial.print(F("PWM Started."));
+
+   /*
+   * In theory the internal oscillator (clock) is 25MHz but it really isn't
+   * that precise. You can 'calibrate' this by tweaking this number until
+   * you get the PWM update frequency you're expecting!
+   * The int.osc. for the PCA9685 chip is a range between about 23-27MHz and
+   * is used for calculating things like writeMicroseconds()
+   * Analog servos run at ~50 Hz updates, It is importaint to use an
+   * oscilloscope in setting the int.osc frequency for the I2C PCA9685 chip.
+   * 1) Attach the oscilloscope to one of the PWM signal pins and ground on
+   *    the I2C PCA9685 chip you are setting the value for.
+   * 2) Adjust setOscillatorFrequency() until the PWM update frequency is the
+   *    expected value (50Hz for most ESCs)
+   * Setting the value here is specific to each individual I2C PCA9685 chip and
+   * affects the calculations for the PWM update frequency. 
+   * Failure to correctly set the int.osc value will cause unexpected PWM results
+   */
+  pwm.setOscillatorFrequency(27000000);
+  pwm.setPWMFreq(1600); // This is the maximum PWM frequency
+  // pwm.setPWMFreq(SERVO_FREQ);  // Analog servos run at ~50 Hz updates
+
+
+  _state.volumeCinema = DEFAULT_VOLUME_STATE;
+  _state.volumeCozinha = DEFAULT_VOLUME_STATE;
+  _state.volumeSala = DEFAULT_VOLUME_STATE;
+  _state.volumeVaranda = DEFAULT_VOLUME_STATE;
   onConfigUpdated();
 }
 
 void VolumeStateService::onConfigUpdated() {
-  Servo1.startEaseToD((float) (_state.volume * (VOLUME_MAX_ROTATION / 360.0)), (uint_fast16_t) 300, DO_NOT_START_UPDATE_BY_INTERRUPT); // rotate to position using speed
-   do {
-      // First do the delay, then check for update, since we are probably called directly after start and there is nothing to move yet
-      delay(REFRESH_INTERVAL_MILLIS); // 20 ms
-  #if defined(PRINT_FOR_SERIAL_PLOTTER)
-    } while (!updateAllServos()); // this outputs a value plus a newline, whilst Servo1.update() would not output the newline
-  #else
-    } while (!Servo1.update());
-  #endif
+  // Servo1AtPCA9685.startEaseToD((float) (_state.volume * (VOLUME_MAX_ROTATION / 360.0)), (uint_fast16_t) 300, DO_NOT_START_UPDATE_BY_INTERRUPT); // rotate to position using speed
+  //  do {
+  //     // First do the delay, then check for update, since we are probably called directly after start and there is nothing to move yet
+  //     delay(REFRESH_INTERVAL_MILLIS); // 20 ms
+  // #if defined(PRINT_FOR_SERIAL_PLOTTER)
+  //   } while (!updateAllServos()); // this outputs a value plus a newline, whilst Servo1.update() would not output the newline
+  // #else
+  //   } while (!Servo1AtPCA9685.update());
+  // #endif
+
+  Serial.print(F("Updated State Volume Sala: "));
+  Serial.print(_state.volumeSala);
+  pwm.setPWM(0, 0, (_state.volumeSala * (SERVOMAX / 100.0)));
+
+  
+  Serial.print(F("Updated State Volume Cinema: "));
+  Serial.print(_state.volumeCinema);
+  pwm.setPWM(1, 0, (_state.volumeCinema * (SERVOMAX / 100.0)));
+
+  
+  Serial.print(F("Updated State Volume Varanda: "));
+  Serial.print(_state.volumeVaranda);
+  pwm.setPWM(2, 0, (_state.volumeVaranda * (SERVOMAX / 100.0)));
+
+  
+  Serial.print(F("Updated State Volume Cozinha: "));
+  Serial.print(_state.volumeCozinha);
+  pwm.setPWM(3, 0, (_state.volumeCozinha * (SERVOMAX / 100.0)));
 }
 
 void VolumeStateService::registerConfig() {

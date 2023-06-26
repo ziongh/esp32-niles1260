@@ -18,17 +18,11 @@ const DemoProject: FC = () => {
   return (
     <>
       <RouterTabs value={routerTab}>
-        <Tab value="information" label="Information" />
-        <Tab value="rest" label="REST Example" />
         <Tab value="socket" label="WebSocket Example" />
-        <Tab value="mqtt" label="MQTT Settings" />
       </RouterTabs>
       <Routes>
-        <Route path="information" element={<DemoInformation />} />
-        <Route path="rest" element={<LightStateRestForm />} />
-        <Route path="mqtt" element={<LightMqttSettingsForm />} />
         <Route path="socket" element={<LightStateWebSocketForm />} />
-        <Route path="/*" element={<Navigate replace to="information" />} />
+        <Route path="/*" element={<Navigate replace to="socket" />} />
       </Routes>
     </>
   );

@@ -9,8 +9,8 @@
 
 #ifdef ESP32
 #define SERVO1_PIN  5
-#define SERVO2_PIN 18
-#define SERVO3_PIN 19
+#define SERVO2_PIN 21
+#define SERVO3_PIN 22
 #define SPEED_IN_PIN A0 // 36/VP
 #define MODE_ANALOG_INPUT_PIN A3 // 39
 #elif defined(__AVR__) // Default as for ATmega328 like on Uno, Nano etc.
@@ -27,8 +27,6 @@
 #endif
 
 #define DEFAULT_VOLUME_STATE 0
-#define OFF_STATE "OFF"
-#define ON_STATE "ON"
 
 // Note that the built-in VOLUME is on when the pin is low on most NodeMCU boards.
 // This is because the anode is tied to VCC and the cathode to the GPIO 4 (Arduino pin 2).
@@ -45,37 +43,98 @@
 
 class VolumeState {
  public:
-  int volume;
+  int volumeSala;
+  int volumeVaranda;
+  int volumeCozinha;
+  int volumeCinema;
 
   static void read(VolumeState& settings, JsonObject& root) {
-    root["volume"] = settings.volume;
+    root["volumeSala"] = settings.volumeSala;
+    root["volumeVaranda"] = settings.volumeVaranda;
+    root["volumeCozinha"] = settings.volumeCozinha;
+    root["volumeCinema"] = settings.volumeCinema;
   }
 
   static StateUpdateResult update(JsonObject& root, VolumeState& VolumeState) {
-    boolean newState = root["volume"] | DEFAULT_VOLUME_STATE;
-    if (VolumeState.volume != newState) {
-      VolumeState.volume = newState;
+    bool updated = false;
+
+    int newStateSala = root["volumeSala"] | DEFAULT_VOLUME_STATE;
+    if (VolumeState.volumeSala != newStateSala) {
+      VolumeState.volumeSala = newStateSala;
+      updated = true;
+    }
+
+    int newStateVaranda = root["volumeVaranda"] | DEFAULT_VOLUME_STATE;
+    if (VolumeState.volumeVaranda != newStateVaranda) {
+      VolumeState.volumeVaranda = newStateVaranda;
+      updated = true;
+    }
+
+    int newStateCozinha = root["volumeCozinha"] | DEFAULT_VOLUME_STATE;
+    if (VolumeState.volumeCozinha != newStateCozinha) {
+      VolumeState.volumeCozinha = newStateCozinha;
+      updated = true;
+    }
+
+    int newStateCinema = root["volumeCinema"] | DEFAULT_VOLUME_STATE;
+    if (VolumeState.volumeCinema != newStateCinema) {
+      VolumeState.volumeCinema = newStateCinema;
+      updated = true;
+    }
+
+    if(updated){
       return StateUpdateResult::CHANGED;
     }
+
     return StateUpdateResult::UNCHANGED;
   }
 
   static void haRead(VolumeState& settings, JsonObject& root) {
-    root["state"] = settings.volume ? ON_STATE : OFF_STATE;
+    root["volumeSala"] = settings.volumeSala;
+    root["volumeVaranda"] = settings.volumeVaranda;
+    root["volumeCozinha"] = settings.volumeCozinha;
+    root["volumeCinema"] = settings.volumeCinema;
   }
 
   static StateUpdateResult haUpdate(JsonObject& root, VolumeState& VolumeState) {
-    String state = root["state"];
-    // parse new led state 
-    boolean newState = false;
-    if (state.equals(ON_STATE)) {
-      newState = true;
-    } else if (!state.equals(OFF_STATE)) {
-      return StateUpdateResult::ERROR;
+    Serial.print(F("HA Changed State (volumeSala, volumeVaranda, volumeCozinha, volumeCinema): "));
+
+    int volumeSala = root["volumeSala"];
+    int volumeVaranda = root["volumeVaranda"];
+    int volumeCozinha = root["volumeCozinha"];
+    int volumeCinema = root["volumeCinema"];
+
+    Serial.print(volumeSala);
+    Serial.print(volumeVaranda);
+    Serial.print(volumeCozinha);
+    Serial.print(volumeCinema);
+    Serial.println();
+
+    Serial.println(root);
+
+    bool updated = false;
+
+    if (VolumeState.volumeSala != volumeSala) {
+      VolumeState.volumeSala = volumeSala;
+      updated = true;
     }
-    // change the new state, if required
-    if (VolumeState.volume != newState) {
-      VolumeState.volume = newState;
+
+    if (VolumeState.volumeVaranda != volumeVaranda) {
+      VolumeState.volumeVaranda = volumeVaranda;
+      updated = true;
+    }
+
+    if (VolumeState.volumeCozinha != volumeCozinha) {
+      VolumeState.volumeCozinha = volumeCozinha;
+      updated = true;
+    }
+
+    if (VolumeState.volumeCinema != volumeCinema) {
+      VolumeState.volumeCinema = volumeCinema;
+      updated = true;
+    }
+
+    if(updated){
       return StateUpdateResult::CHANGED;
     }
     return StateUpdateResult::UNCHANGED;

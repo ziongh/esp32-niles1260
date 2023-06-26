@@ -26,6 +26,8 @@ export const updateValue = <S>(updateEntity: UpdateEntity<S>) => (
 
 export const updateValueDirect = <S>(updateEntity: UpdateEntity<S>) => (
   (value:number, propName: string) => {
+    console.log(value, propName);
+    debugger;
     updateEntity((prevState) => ({
       ...prevState,
       [propName]: value
