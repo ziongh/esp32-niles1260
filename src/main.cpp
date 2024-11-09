@@ -304,7 +304,7 @@ void setup() {
   volumeVaranda.setRetain(true);
 
   // MQTT broker connection (use your data here)
-  mqtt.begin("192.168.15.248", "ziongh", "Ziongh123!");
+  mqtt.begin("192.168.52.6", "ziongh", "Ziongh123!");
   Serial.println("MQTT Connected!");
 }
 
