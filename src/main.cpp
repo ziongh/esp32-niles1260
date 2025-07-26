@@ -143,13 +143,6 @@ void AttachServos() {
 }
 
 void EaseTo(float degree, ServoEasing* servo) {
-  if (!servoSleeping) {
-    int counter = 0;
-    while(counter < 30000){
-      counter++;
-    }
-  }
-
   if (servoSleeped) {
     AttachServos();
   }
@@ -171,6 +164,9 @@ void onVolumeSalaCommand(HANumeric number, HANumber* sender) {
     // the reset command was send by Home Assistant
   } else {
     float numberf = number.toFloat();
+    if (sender->isSet() && numberf == sender->toFloat()) {
+      return;  // Already in this state
+    }
     EaseTo(numberf, &ServoSalaRight);
     EaseTo(numberf, &ServoSalaLeft);
   }
@@ -183,6 +179,9 @@ void onVolumeCinemaCommand(HANumeric number, HANumber* sender) {
     // the reset command was send by Home Assistant
   } else {
     float numberf = number.toFloat();
+    if (sender->isSet() && numberf == sender->toFloat()) {
+      return;  // Already in this state
+    }
     EaseTo(numberf, &ServoCinemaRight);
     EaseTo(numberf, &ServoCinemaLeft);
   }
@@ -195,6 +194,9 @@ void onVolumeVarandaCommand(HANumeric number, HANumber* sender) {
     // the reset command was send by Home Assistant
   } else {
     float numberf = number.toFloat();
+    if (sender->isSet() && numberf == sender->toFloat()) {
+      return;  // Already in this state
+    }
     EaseTo(numberf, &ServoVarandaRight);
     EaseTo(numberf, &ServoVarandaLeft);
   }
@@ -207,6 +209,9 @@ void onVolumeCozinhaCommand(HANumeric number, HANumber* sender) {
     // the reset command was send by Home Assistant
   } else {
     float numberf = number.toFloat();
+    if (sender->isSet() && numberf == sender->toFloat()) {
+      return;  // Already in this state
+    }
     EaseTo(numberf, &ServoCozinhaRight);
   }
 
@@ -233,13 +238,19 @@ void setup() {
   AttachServos();
 
   // you can skip this part if you're already maintaining the connection logic
-  WiFi.begin("MarriedMe", "TudoIgual!");
+  WiFi.begin(FACTORY_WIFI_SSID, FACTORY_WIFI_PASSWORD);
+  Serial.print("Connecting to WiFi");
+  uint8_t wifi_timeout = 0;
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);  // waiting for the connection
-    Serial.println("Connecting WIFI...");
+    delay(500);
+    Serial.print(".");
+    if (wifi_timeout++ > 40) {  // ~20 seconds timeout
+      Serial.println("\nWiFi connection failed, rebooting...");
+      ESP.restart();
+    }
   }
 
-  Serial.println("WIFI Connected!");
+  Serial.println("\nWiFi Connected!");
 
   // set device's details (optional)
   device.setName("NilesController");
@@ -304,11 +315,16 @@ void setup() {
   volumeVaranda.setRetain(true);
 
   // MQTT broker connection (use your data here)
-  mqtt.begin("192.168.52.6", "ziongh", "Ziongh123!");
-  Serial.println("MQTT Connected!");
+  mqtt.begin(FACTORY_MQTT_HOST, FACTORY_MQTT_PORT, FACTORY_MQTT_USERNAME, FACTORY_MQTT_PASSWORD);
+  Serial.println("MQTT configured. Will connect in the background.");
 }
 
 void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("WiFi disconnected. Rebooting...");
+    ESP.restart();
+  }
   mqtt.loop();
 
   // if (sleepCounter >= 30000 && !servoSleeping && !servoSleeped) {
