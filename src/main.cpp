@@ -4,10 +4,14 @@
 #include <ArduinoHA.h>
 #include <Preferences.h> // For saving calibration
 
+// Increase MQTT buffer size and max entities. This MUST be before the includes.
+#define MQTT_MAX_PACKET_SIZE 4096
+#define ARDUINOHA_MAX_ENTITIES 20
+
 // Must be defined before including ServoEasing.hpp
 #define USE_PCA9685_SERVO_EXPANDER
 #define DISABLE_COMPLEX_FUNCTIONS
-#define MAX_EASING_SERVOS 16 // Kept high to handle all entities
+#define MAX_EASING_SERVOS 16 
 #define ENABLE_EASE_QUADRATIC
 #include "ServoEasing.hpp"
 
@@ -99,7 +103,7 @@ float lastMasterVolume = 100.0;
 
 // System State Variables
 bool initialSyncComplete = false;
-bool statesPublished = false; // CORRECTED: New flag to ensure states are published only once.
+bool statesPublished = false;
 bool servosAreSleeping = true; 
 unsigned long lastActivityTime = 0;
 unsigned long mqttConnectedTime = 0;
@@ -117,6 +121,7 @@ void updateStereoPairServos(StereoZone& zone);
 
 // Callbacks
 void unifiedVolumeCallback(HANumeric number, HANumber* sender);
+// THIS IS THE CORRECTED LINE
 void unifiedBalanceCallback(HANumeric number, HANumber* sender);
 void unifiedMinAngleCallback(HANumeric number, HANumber* sender);
 void unifiedMaxAngleCallback(HANumeric number, HANumber* sender);
@@ -130,7 +135,7 @@ void onMasterVolumeCommand(HANumeric number, HANumber* sender);
 
 void setup() {
     Serial.begin(115200);
-    Serial.println(F("\n\nStarting Niles Volume Controller v5.2 (Corrected Discovery)..."));
+    Serial.println(F("\n\nStarting Niles Volume Controller v5.4 (Signature Corrected)..."));
 
     byte mac[6];
     WiFi.macAddress(mac);
@@ -145,7 +150,7 @@ void setup() {
     Serial.println(F("PCA9685 board found."));
 
     device.setName("Niles Controller");
-    device.setSoftwareVersion("5.2.0");
+    device.setSoftwareVersion("5.4.0");
     device.enableSharedAvailability();
     device.enableLastWill();
 
@@ -194,11 +199,9 @@ void loop() {
     checkConnections();
     mqtt.loop();
 
-    // CORRECTED: This whole block ensures states are published AFTER connection.
     if (mqtt.isConnected() && !statesPublished) {
         Serial.println("MQTT Connected. Publishing initial states...");
         
-        // Loop through and set initial states for all entities
         for (int i = 0; i < numStereoZones; i++) {
             zones[i].minAngleEntity.setState(zones[i].minAngle);
             zones[i].maxAngleEntity.setState(zones[i].maxAngle);
@@ -208,7 +211,7 @@ void loop() {
         masterVolume.setState(lastMasterVolume);
         volumeCozinha.setState(currentCozinhaVolume);
 
-        statesPublished = true; // Mark as done so we don't do this again
+        statesPublished = true;
         Serial.println("Initial states published.");
     }
 
@@ -230,7 +233,7 @@ void loop() {
 
 
 // =====================================================================================================================
-// --- Home Assistant Callback Functions (No changes in this section) ---
+// --- Home Assistant Callback Functions ---
 // =====================================================================================================================
 
 void unifiedVolumeCallback(HANumeric number, HANumber* sender) {
@@ -248,17 +251,20 @@ void unifiedVolumeCallback(HANumeric number, HANumber* sender) {
     }
 }
 
+// THIS IS THE CORRECTED FUNCTION DEFINITION
 void unifiedBalanceCallback(HANumeric number, HANumber* sender) {
     if (!number.isSet()) return;
     for (int i = 0; i < numStereoZones; i++) {
+        // Check if the sender of this command matches the balance entity for this zone.
         if (sender == &zones[i].balanceEntity) {
             zones[i].currentBalance = number.toFloat();
-            sender->setState(number);
+            sender->setState(number); // Report back to HA
+
             if (initialSyncComplete) {
                 updateStereoPairServos(zones[i]);
                 lastActivityTime = millis();
             }
-            break;
+            break; // Found our zone, no need to check others.
         }
     }
 }
@@ -346,7 +352,7 @@ void onVolumeCozinhaCommand(HANumeric number, HANumber* sender) {
 
 
 // =====================================================================================================================
-// --- Helper Functions (No changes in this section) ---
+// --- Helper Functions ---
 // =====================================================================================================================
 
 void updateStereoPairServos(StereoZone& zone) {
