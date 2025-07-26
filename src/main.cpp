@@ -99,6 +99,7 @@ float lastMasterVolume = 100.0;
 
 // System State Variables
 bool initialSyncComplete = false;
+bool statesPublished = false; // CORRECTED: New flag to ensure states are published only once.
 bool servosAreSleeping = true; 
 unsigned long lastActivityTime = 0;
 unsigned long mqttConnectedTime = 0;
@@ -129,7 +130,7 @@ void onMasterVolumeCommand(HANumeric number, HANumber* sender);
 
 void setup() {
     Serial.begin(115200);
-    Serial.println(F("\n\nStarting Niles Volume Controller v5.1 (Calibrated)..."));
+    Serial.println(F("\n\nStarting Niles Volume Controller v5.2 (Corrected Discovery)..."));
 
     byte mac[6];
     WiFi.macAddress(mac);
@@ -144,22 +145,18 @@ void setup() {
     Serial.println(F("PCA9685 board found."));
 
     device.setName("Niles Controller");
-    device.setSoftwareVersion("5.1.0");
+    device.setSoftwareVersion("5.2.0");
     device.enableSharedAvailability();
     device.enableLastWill();
 
-    // Initialize Preferences and load saved calibration data
-    preferences.begin("niles-ctrl", false); // "niles-ctrl" is our namespace
+    preferences.begin("niles-ctrl", false);
 
     for (int i = 0; i < numStereoZones; i++) {
         char minKey[16], maxKey[16];
         snprintf(minKey, sizeof(minKey), "%s_min_angle", zones[i].id);
         snprintf(maxKey, sizeof(maxKey), "%s_max_angle", zones[i].id);
-
-        // Load saved values, or use the hardcoded defaults if not found
         zones[i].minAngle = preferences.getFloat(minKey, zones[i].minAngle);
         zones[i].maxAngle = preferences.getFloat(maxKey, zones[i].maxAngle);
-        Serial.printf("Zone '%s' loaded calibration: Min=%.1f, Max=%.1f\n", zones[i].name, zones[i].minAngle, zones[i].maxAngle);
     }
 
     // Setup HA entities for each stereo zone
@@ -175,14 +172,11 @@ void setup() {
         setupHaNumber(zones[i].balanceEntity, balanceName, "mdi:speaker-multiple", HA_BALANCE_MIN, HA_BALANCE_MAX, 1);
         zones[i].balanceEntity.onCommand(unifiedBalanceCallback);
         
-        // Setup calibration sliders
         setupHaNumber(zones[i].minAngleEntity, minName, "mdi:page-layout-header-footer", HA_CALIBRATION_ANGLE_MIN, HA_CALIBRATION_ANGLE_MAX, 0.5);
         zones[i].minAngleEntity.onCommand(unifiedMinAngleCallback);
-        zones[i].minAngleEntity.setState(zones[i].minAngle);
 
         setupHaNumber(zones[i].maxAngleEntity, maxName, "mdi:page-layout-header-footer", HA_CALIBRATION_ANGLE_MIN, HA_CALIBRATION_ANGLE_MAX, 0.5);
         zones[i].maxAngleEntity.onCommand(unifiedMaxAngleCallback);
-        zones[i].maxAngleEntity.setState(zones[i].maxAngle);
     }
 
     // Setup mono and master entities
@@ -191,7 +185,6 @@ void setup() {
 
     setupHaNumber(masterVolume, "Master Volume", "mdi:volume-vibrate", HA_VOLUME_MIN, HA_VOLUME_MAX, 1);
     masterVolume.onCommand(onMasterVolumeCommand);
-    masterVolume.setState(lastMasterVolume);
 
     Serial.println(F("Connecting to MQTT..."));
     mqtt.begin(MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASSWORD);
@@ -201,14 +194,31 @@ void loop() {
     checkConnections();
     mqtt.loop();
 
+    // CORRECTED: This whole block ensures states are published AFTER connection.
+    if (mqtt.isConnected() && !statesPublished) {
+        Serial.println("MQTT Connected. Publishing initial states...");
+        
+        // Loop through and set initial states for all entities
+        for (int i = 0; i < numStereoZones; i++) {
+            zones[i].minAngleEntity.setState(zones[i].minAngle);
+            zones[i].maxAngleEntity.setState(zones[i].maxAngle);
+            zones[i].volumeEntity.setState(zones[i].currentVolume);
+            zones[i].balanceEntity.setState(zones[i].currentBalance);
+        }
+        masterVolume.setState(lastMasterVolume);
+        volumeCozinha.setState(currentCozinhaVolume);
+
+        statesPublished = true; // Mark as done so we don't do this again
+        Serial.println("Initial states published.");
+    }
+
     if (mqtt.isConnected() && !initialSyncComplete) {
         if (mqttConnectedTime == 0) {
             mqttConnectedTime = millis();
-            Serial.println(F("MQTT Connected. Starting initial sync grace period..."));
         }
         if (millis() - mqttConnectedTime > INITIAL_SYNC_PERIOD_MS) {
             initialSyncComplete = true;
-            Serial.println(F("Initial sync complete. Ready for commands."));
+            Serial.println(F("Initial sync grace period complete. Ready for commands."));
             lastActivityTime = millis();
         }
     }
@@ -220,7 +230,7 @@ void loop() {
 
 
 // =====================================================================================================================
-// --- Home Assistant Callback Functions ---
+// --- Home Assistant Callback Functions (No changes in this section) ---
 // =====================================================================================================================
 
 void unifiedVolumeCallback(HANumeric number, HANumber* sender) {
@@ -336,7 +346,7 @@ void onVolumeCozinhaCommand(HANumeric number, HANumber* sender) {
 
 
 // =====================================================================================================================
-// --- Helper Functions ---
+// --- Helper Functions (No changes in this section) ---
 // =====================================================================================================================
 
 void updateStereoPairServos(StereoZone& zone) {
