@@ -2,11 +2,7 @@
 #include <WiFi.h>
 #include <Wire.h>
 #include <ArduinoHA.h>
-#include <Preferences.h> // For saving calibration
-
-// Increase MQTT buffer size and max entities. This MUST be before the includes.
-#define MQTT_MAX_PACKET_SIZE 4096
-#define ARDUINOHA_MAX_ENTITIES 20
+#include <Preferences.h>
 
 // Must be defined before including ServoEasing.hpp
 #define USE_PCA9685_SERVO_EXPANDER
@@ -80,6 +76,9 @@ struct StereoZone {
     float currentBalance;
     float minAngle;
     float maxAngle;
+    char balanceName[32];
+    char minAngleName[32];
+    char maxAngleName[32];
 };
 
 // Home Assistant Entities
@@ -103,6 +102,7 @@ float lastMasterVolume = 100.0;
 
 // System State Variables
 bool initialSyncComplete = false;
+bool reannouncementTriggered = false; 
 bool statesPublished = false;
 bool servosAreSleeping = true; 
 unsigned long lastActivityTime = 0;
@@ -121,7 +121,6 @@ void updateStereoPairServos(StereoZone& zone);
 
 // Callbacks
 void unifiedVolumeCallback(HANumeric number, HANumber* sender);
-// THIS IS THE CORRECTED LINE
 void unifiedBalanceCallback(HANumeric number, HANumber* sender);
 void unifiedMinAngleCallback(HANumeric number, HANumber* sender);
 void unifiedMaxAngleCallback(HANumeric number, HANumber* sender);
@@ -135,7 +134,7 @@ void onMasterVolumeCommand(HANumeric number, HANumber* sender);
 
 void setup() {
     Serial.begin(115200);
-    Serial.println(F("\n\nStarting Niles Volume Controller v5.4 (Signature Corrected)..."));
+    Serial.println(F("\n\nStarting Niles Volume Controller v5.4.12 (Retain Fix)..."));
 
     byte mac[6];
     WiFi.macAddress(mac);
@@ -150,7 +149,7 @@ void setup() {
     Serial.println(F("PCA9685 board found."));
 
     device.setName("Niles Controller");
-    device.setSoftwareVersion("5.4.0");
+    device.setSoftwareVersion("5.4.12");
     device.enableSharedAvailability();
     device.enableLastWill();
 
@@ -163,44 +162,47 @@ void setup() {
         zones[i].minAngle = preferences.getFloat(minKey, zones[i].minAngle);
         zones[i].maxAngle = preferences.getFloat(maxKey, zones[i].maxAngle);
     }
-
-    // Setup HA entities for each stereo zone
+    
     for (int i = 0; i < numStereoZones; i++) {
+        snprintf(zones[i].balanceName, sizeof(zones[i].balanceName), "Balance %s", zones[i].name);
+        snprintf(zones[i].minAngleName, sizeof(zones[i].minAngleName), "Min Angle %s", zones[i].name);
+        snprintf(zones[i].maxAngleName, sizeof(zones[i].maxAngleName), "Max Angle %s", zones[i].name);
+
         setupHaNumber(zones[i].volumeEntity, zones[i].name, "mdi:volume-high", HA_VOLUME_MIN, HA_VOLUME_MAX, 1);
         zones[i].volumeEntity.onCommand(unifiedVolumeCallback);
 
-        char balanceName[32], minName[32], maxName[32];
-        snprintf(balanceName, sizeof(balanceName), "Balance %s", zones[i].name);
-        snprintf(minName, sizeof(minName), "Min Angle %s", zones[i].name);
-        snprintf(maxName, sizeof(maxName), "Max Angle %s", zones[i].name);
-
-        setupHaNumber(zones[i].balanceEntity, balanceName, "mdi:speaker-multiple", HA_BALANCE_MIN, HA_BALANCE_MAX, 1);
+        setupHaNumber(zones[i].balanceEntity, zones[i].balanceName, "mdi:speaker-multiple", HA_BALANCE_MIN, HA_BALANCE_MAX, 1);
         zones[i].balanceEntity.onCommand(unifiedBalanceCallback);
         
-        setupHaNumber(zones[i].minAngleEntity, minName, "mdi:page-layout-header-footer", HA_CALIBRATION_ANGLE_MIN, HA_CALIBRATION_ANGLE_MAX, 0.5);
+        setupHaNumber(zones[i].minAngleEntity, zones[i].minAngleName, "mdi:page-layout-header-footer", HA_CALIBRATION_ANGLE_MIN, HA_CALIBRATION_ANGLE_MAX, 1.0);
         zones[i].minAngleEntity.onCommand(unifiedMinAngleCallback);
 
-        setupHaNumber(zones[i].maxAngleEntity, maxName, "mdi:page-layout-header-footer", HA_CALIBRATION_ANGLE_MIN, HA_CALIBRATION_ANGLE_MAX, 0.5);
+        setupHaNumber(zones[i].maxAngleEntity, zones[i].maxAngleName, "mdi:page-layout-header-footer", HA_CALIBRATION_ANGLE_MIN, HA_CALIBRATION_ANGLE_MAX, 1.0);
         zones[i].maxAngleEntity.onCommand(unifiedMaxAngleCallback);
     }
 
-    // Setup mono and master entities
     setupHaNumber(volumeCozinha, "Volume Cozinha", "mdi:silverware-fork-knife", HA_VOLUME_MIN, HA_VOLUME_MAX, 1);
     volumeCozinha.onCommand(onVolumeCozinhaCommand);
 
     setupHaNumber(masterVolume, "Master Volume", "mdi:volume-vibrate", HA_VOLUME_MIN, HA_VOLUME_MAX, 1);
     masterVolume.onCommand(onMasterVolumeCommand);
 
-    Serial.println(F("Connecting to MQTT..."));
+    Serial.println(F("Connecting to MQTT broker..."));
     mqtt.begin(MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASSWORD);
 }
 
 void loop() {
-    checkConnections();
     mqtt.loop();
+    
+    if (mqtt.isConnected() && !reannouncementTriggered) {
+        Serial.println("Connection stable. Forcing full discovery re-announcement...");
+        mqtt.publish("homeassistant/status", "online", true); // Use retain=true here for HA's benefit
+        Serial.println("Re-announcement message sent to homeassistant/status.");
+        reannouncementTriggered = true; 
+    }
 
-    if (mqtt.isConnected() && !statesPublished) {
-        Serial.println("MQTT Connected. Publishing initial states...");
+    if (reannouncementTriggered && !statesPublished) {
+        Serial.println("Publishing initial states...");
         
         for (int i = 0; i < numStereoZones; i++) {
             zones[i].minAngleEntity.setState(zones[i].minAngle);
@@ -251,20 +253,17 @@ void unifiedVolumeCallback(HANumeric number, HANumber* sender) {
     }
 }
 
-// THIS IS THE CORRECTED FUNCTION DEFINITION
 void unifiedBalanceCallback(HANumeric number, HANumber* sender) {
     if (!number.isSet()) return;
     for (int i = 0; i < numStereoZones; i++) {
-        // Check if the sender of this command matches the balance entity for this zone.
         if (sender == &zones[i].balanceEntity) {
             zones[i].currentBalance = number.toFloat();
-            sender->setState(number); // Report back to HA
-
+            sender->setState(number); 
             if (initialSyncComplete) {
                 updateStereoPairServos(zones[i]);
                 lastActivityTime = millis();
             }
-            break; // Found our zone, no need to check others.
+            break;
         }
     }
 }
@@ -356,7 +355,7 @@ void onVolumeCozinhaCommand(HANumeric number, HANumber* sender) {
 // =====================================================================================================================
 
 void updateStereoPairServos(StereoZone& zone) {
-    Serial.printf("Updating pair '%s': Vol=%.1f, Bal=%.1f, MinAng=%.1f, MaxAng=%.1f\n",
+    Serial.printf("Updating pair '%s': Vol=%.1f, Bal=%.1f, MinAng=%.1f, MaxAng%.1f\n",
                   zone.name, zone.currentVolume, zone.currentBalance, zone.minAngle, zone.maxAngle);
 
     float baseAngle = map(zone.currentVolume, HA_VOLUME_MIN, HA_VOLUME_MAX, zone.minAngle, zone.maxAngle);
@@ -386,6 +385,7 @@ void moveServoToAngle(ServoEasing& servo, float targetAngle, const char* name) {
     servo.startEaseTo(targetAngle, SERVO_SPEED_DPS, START_UPDATE_BY_INTERRUPT);
 }
 
+// FIX: Change setRetain to false to prevent commands from being retained.
 void setupHaNumber(HANumber& number, const char* name, const char* icon, float minVal, float maxVal, float step) {
     number.setName(name);
     number.setIcon(icon);
@@ -393,7 +393,7 @@ void setupHaNumber(HANumber& number, const char* name, const char* icon, float m
     number.setMax(maxVal);
     number.setStep(step);
     number.setMode(HANumber::ModeSlider);
-    number.setRetain(true);
+    number.setRetain(false); // This is the key change
 }
 
 void connectWiFi() {
