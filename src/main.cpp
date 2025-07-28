@@ -3,11 +3,12 @@
 #include <Wire.h>
 #include <ArduinoHA.h>
 #include <Preferences.h>
+#include <functional>
 
 // Must be defined before including ServoEasing.hpp
 #define USE_PCA9685_SERVO_EXPANDER
 #define DISABLE_COMPLEX_FUNCTIONS
-#define MAX_EASING_SERVOS 16 // Increased to handle all entities
+#define MAX_EASING_SERVOS 16
 #define ENABLE_EASE_QUADRATIC
 #include "ServoEasing.hpp"
 
@@ -53,7 +54,7 @@ const uint8_t SERVO_COZINHA_RIGHT_CH = 6;
 // System Objects
 WiFiClient wifiClient;
 HADevice device;
-HAMqtt mqtt(wifiClient, device, 16); // Increased entity limit
+HAMqtt mqtt(wifiClient, device, 24); // Increased entity limit to be safe
 Preferences preferences;
 
 // Servo objects
@@ -104,16 +105,13 @@ struct MonoZone {
 
 // Home Assistant Entities
 HANumber volumeSala("volumeSala"), balanceSala("balanceSala");
-HANumber minAngleSalaLeft("minAngleSalaLeft"), maxAngleSalaLeft("maxAngleSalaLeft");
-HANumber minAngleSalaRight("minAngleSalaRight"), maxAngleSalaRight("maxAngleSalaRight");
+HANumber minAngleSalaLeft("minAngleSalaLeft"), maxAngleSalaLeft("maxAngleSalaLeft"), minAngleSalaRight("minAngleSalaRight"), maxAngleSalaRight("maxAngleSalaRight");
 
 HANumber volumeCinema("volumeCinema"), balanceCinema("balanceCinema");
-HANumber minAngleCinemaLeft("minAngleCinemaLeft"), maxAngleCinemaLeft("maxAngleCinemaLeft");
-HANumber minAngleCinemaRight("minAngleCinemaRight"), maxAngleCinemaRight("maxAngleCinemaRight");
+HANumber minAngleCinemaLeft("minAngleCinemaLeft"), maxAngleCinemaLeft("maxAngleCinemaLeft"), minAngleCinemaRight("minAngleCinemaRight"), maxAngleCinemaRight("maxAngleCinemaRight");
 
 HANumber volumeVaranda("volumeVaranda"), balanceVaranda("balanceVaranda");
-HANumber minAngleVarandaLeft("minAngleVarandaLeft"), maxAngleVarandaLeft("maxAngleVarandaLeft");
-HANumber minAngleVarandaRight("minAngleVarandaRight"), maxAngleVarandaRight("maxAngleVarandaRight");
+HANumber minAngleVarandaLeft("minAngleVarandaLeft"), maxAngleVarandaLeft("maxAngleVarandaLeft"), minAngleVarandaRight("minAngleVarandaRight"), maxAngleVarandaRight("maxAngleVarandaRight");
 
 HANumber volumeCozinha("volumeCozinha"), minAngleCozinha("minAngleCozinha"), maxAngleCozinha("maxAngleCozinha");
 HANumber masterVolume("masterVolume");
@@ -124,13 +122,13 @@ StereoZone stereoZones[] = {
     { "cinema", "Cinema", ServoCinemaLeft, ServoCinemaRight, volumeCinema, balanceCinema, minAngleCinemaLeft, maxAngleCinemaLeft, minAngleCinemaRight, maxAngleCinemaRight, 0.0, 0.0, 0.0, 250.0, 0.0, 250.0 },
     { "varanda", "Varanda", ServoVarandaLeft, ServoVarandaRight, volumeVaranda, balanceVaranda, minAngleVarandaLeft, maxAngleVarandaLeft, minAngleVarandaRight, maxAngleVarandaRight, 0.0, 0.0, 0.0, 250.0, 0.0, 250.0 }
 };
-const int numStereoZones = sizeof(stereoZones) / sizeof(stereoZones);
+const int numStereoZones = sizeof(stereoZones) / sizeof(stereoZones[0]);
 
 // Array of mono zones
 MonoZone monoZones[] = {
     { "cozinha", "Cozinha", ServoCozinhaRight, volumeCozinha, minAngleCozinha, maxAngleCozinha, 0.0, 0.0, 220.0 }
 };
-const int numMonoZones = sizeof(monoZones) / sizeof(monoZones);
+const int numMonoZones = sizeof(monoZones) / sizeof(monoZones[0]);
 
 // State for master volume
 float currentMasterVolume = 100.0;
@@ -151,13 +149,14 @@ portMUX_TYPE commandMutex = portMUX_INITIALIZER_UNLOCKED;
 // --- Function Prototypes ---
 // =====================================================================================================================
 void connectWiFi();
-void checkConnections();
 void wakeUpServos();
 void sleepServos();
 void setupHaNumber(HANumber& number, const char* name, const char* icon, float minVal, float maxVal, float step);
 void moveServoToAngle(ServoEasing& servo, float targetAngle, const char* name);
 void updateStereoPairServos(StereoZone& zone);
 void updateMonoServo(MonoZone& zone);
+void updateAllServoTargets(); // <-- FIX 1/3: Renamed prototype
+void processCommand(std::function<void()> action);
 
 // Callbacks
 void unifiedStereoVolumeCallback(HANumeric number, HANumber* sender);
@@ -175,7 +174,7 @@ void onMasterVolumeCommand(HANumeric number, HANumber* sender);
 
 void setup() {
     Serial.begin(115200);
-    Serial.println(F("\n\nStarting Niles Volume Controller v7.1.0..."));
+    Serial.println(F("\n\nStarting Niles Volume Controller v7.2.2..."));
 
     byte mac[6];
     WiFi.macAddress(mac);
@@ -190,15 +189,14 @@ void setup() {
     Serial.println(F("PCA9685 board found."));
 
     device.setName("Niles Controller");
-    device.setSoftwareVersion("7.1.0");
+    device.setSoftwareVersion("7.2.2");
     device.enableSharedAvailability();
     device.enableLastWill();
 
     preferences.begin("niles-ctrl", false);
-
     // Load preferences for stereo zones
     for (int i = 0; i < numStereoZones; i++) {
-        char minLeftKey[24], maxLeftKey[24], minRightKey[24], maxRightKey[24];
+        char minLeftKey[32], maxLeftKey[32], minRightKey[32], maxRightKey[32];
         snprintf(minLeftKey, sizeof(minLeftKey), "%s_min_angle_l", stereoZones[i].id);
         snprintf(maxLeftKey, sizeof(maxLeftKey), "%s_max_angle_l", stereoZones[i].id);
         snprintf(minRightKey, sizeof(minRightKey), "%s_min_angle_r", stereoZones[i].id);
@@ -212,7 +210,7 @@ void setup() {
 
     // Load preferences for mono zones
     for (int i = 0; i < numMonoZones; i++) {
-        char minKey[20], maxKey[20];
+        char minKey[32], maxKey[32];
         snprintf(minKey, sizeof(minKey), "%s_min_angle", monoZones[i].id);
         snprintf(maxKey, sizeof(maxKey), "%s_max_angle", monoZones[i].id);
         monoZones[i].minAngle = preferences.getFloat(minKey, monoZones[i].minAngle);
@@ -234,16 +232,14 @@ void setup() {
         setupHaNumber(stereoZones[i].balanceEntity, stereoZones[i].balanceName, "mdi:speaker-multiple", HA_BALANCE_MIN, HA_BALANCE_MAX, 1);
         stereoZones[i].balanceEntity.onCommand(unifiedStereoBalanceCallback);
         
-        setupHaNumber(stereoZones[i].minAngleLeftEntity, stereoZones[i].minAngleLeftName, "mdi:page-layout-header-footer", HA_CALIBRATION_ANGLE_MIN, HA_CALIBRATION_ANGLE_MAX, 1.0);
+        const char* icon = "mdi:page-layout-header-footer";
+        setupHaNumber(stereoZones[i].minAngleLeftEntity, stereoZones[i].minAngleLeftName, icon, HA_CALIBRATION_ANGLE_MIN, HA_CALIBRATION_ANGLE_MAX, 1.0);
         stereoZones[i].minAngleLeftEntity.onCommand(unifiedStereoMinAngleCallback);
-
-        setupHaNumber(stereoZones[i].maxAngleLeftEntity, stereoZones[i].maxAngleLeftName, "mdi:page-layout-header-footer", HA_CALIBRATION_ANGLE_MIN, HA_CALIBRATION_ANGLE_MAX, 1.0);
+        setupHaNumber(stereoZones[i].maxAngleLeftEntity, stereoZones[i].maxAngleLeftName, icon, HA_CALIBRATION_ANGLE_MIN, HA_CALIBRATION_ANGLE_MAX, 1.0);
         stereoZones[i].maxAngleLeftEntity.onCommand(unifiedStereoMaxAngleCallback);
-
-        setupHaNumber(stereoZones[i].minAngleRightEntity, stereoZones[i].minAngleRightName, "mdi:page-layout-header-footer", HA_CALIBRATION_ANGLE_MIN, HA_CALIBRATION_ANGLE_MAX, 1.0);
+        setupHaNumber(stereoZones[i].minAngleRightEntity, stereoZones[i].minAngleRightName, icon, HA_CALIBRATION_ANGLE_MIN, HA_CALIBRATION_ANGLE_MAX, 1.0);
         stereoZones[i].minAngleRightEntity.onCommand(unifiedStereoMinAngleCallback);
-
-        setupHaNumber(stereoZones[i].maxAngleRightEntity, stereoZones[i].maxAngleRightName, "mdi:page-layout-header-footer", HA_CALIBRATION_ANGLE_MIN, HA_CALIBRATION_ANGLE_MAX, 1.0);
+        setupHaNumber(stereoZones[i].maxAngleRightEntity, stereoZones[i].maxAngleRightName, icon, HA_CALIBRATION_ANGLE_MIN, HA_CALIBRATION_ANGLE_MAX, 1.0);
         stereoZones[i].maxAngleRightEntity.onCommand(unifiedStereoMaxAngleCallback);
     }
 
@@ -272,21 +268,23 @@ void setup() {
 void loop() {
     mqtt.loop();
     
-    if (servosBusy &&!ServoEasing::areInterruptsActive()) {
-        Serial.println(F("Servo movement complete. Releasing lock."));
+    // If servos were moving, check if they are done now.
+    if (servosBusy && !ServoEasing::areInterruptsActive()) {
         taskENTER_CRITICAL(&commandMutex);
         servosBusy = false;
+        lastActivityTime = millis();
         taskEXIT_CRITICAL(&commandMutex);
+        Serial.println(F("Servo movement complete."));
     }
 
-    if (mqtt.isConnected() &&!reannouncementTriggered) {
+    if (mqtt.isConnected() && !reannouncementTriggered) {
         Serial.println("Connection stable. Forcing full discovery re-announcement...");
         mqtt.publish("homeassistant/status", "online", true);
         Serial.println("Re-announcement message sent to homeassistant/status.");
         reannouncementTriggered = true; 
     }
 
-    if (reannouncementTriggered &&!statesPublished) {
+    if (reannouncementTriggered && !statesPublished) {
         Serial.println("Publishing initial states...");
         
         for (int i = 0; i < numStereoZones; i++) {
@@ -308,10 +306,9 @@ void loop() {
         Serial.println("Initial states published.");
     }
 
-    if (mqtt.isConnected() &&!initialSyncComplete) {
-        if (mqttConnectedTime == 0) {
-            mqttConnectedTime = millis();
-        }
+    if (mqtt.isConnected() && !initialSyncComplete) {
+        if (mqttConnectedTime == 0) mqttConnectedTime = millis();
+        
         if (millis() - mqttConnectedTime > INITIAL_SYNC_PERIOD_MS) {
             initialSyncComplete = true;
             Serial.println(F("Initial sync grace period complete. Ready for commands."));
@@ -322,12 +319,9 @@ void loop() {
     }
 
     // Check if servos should go to sleep
-    taskENTER_CRITICAL(&commandMutex);
-    unsigned long currentTime = millis();
-    taskEXIT_CRITICAL(&commandMutex);
     bool shouldSleep = false;
     taskENTER_CRITICAL(&commandMutex);
-    if (initialSyncComplete && !servosAreSleeping && !servosBusy && (currentTime - lastActivityTime > SERVO_SLEEP_TIMEOUT_MS)) {
+    if (initialSyncComplete && !servosAreSleeping && !servosBusy && (millis() - lastActivityTime > SERVO_SLEEP_TIMEOUT_MS)) {
         shouldSleep = true;
     }
     taskEXIT_CRITICAL(&commandMutex);
@@ -341,310 +335,249 @@ void loop() {
 // --- Home Assistant Callback Functions ---
 // =====================================================================================================================
 
-void unifiedStereoVolumeCallback(HANumeric number, HANumber* sender) {
-    if (!number.isSet()) return;
-    
+void processCommand(std::function<void()> action) {
+    if (!initialSyncComplete) return;
+
     taskENTER_CRITICAL(&commandMutex);
     if (servosBusy) {
         taskEXIT_CRITICAL(&commandMutex);
-        Serial.println(F("Volume command ignored: Servos are busy."));
+        Serial.println(F("Command ignored: Servos are busy."));
         return;
     }
-    servosBusy = true;
+    servosBusy = true; // Set busy flag
     taskEXIT_CRITICAL(&commandMutex);
 
-    for (int i = 0; i < numStereoZones; i++) {
-        if (sender == &stereoZones[i].volumeEntity) {
-            stereoZones[i].currentVolume = number.toFloat();
-            sender->setState(number);
-            if (initialSyncComplete) {
-                taskENTER_CRITICAL(&commandMutex);
+    action(); // Execute the command logic
+}
+
+void unifiedStereoVolumeCallback(HANumeric number, HANumber* sender) {
+    if (!number.isSet()) return;
+    auto action = [&]() {
+        for (int i = 0; i < numStereoZones; i++) {
+            if (sender == &stereoZones[i].volumeEntity) {
+                stereoZones[i].currentVolume = number.toFloat();
+                sender->setState(number);
                 updateStereoPairServos(stereoZones[i]);
-                lastActivityTime = millis();
-                taskEXIT_CRITICAL(&commandMutex);
+                break;
             }
-            break;
         }
-    }
+    };
+    processCommand(action);
 }
 
 void unifiedStereoBalanceCallback(HANumeric number, HANumber* sender) {
     if (!number.isSet()) return;
-
-    taskENTER_CRITICAL(&commandMutex);
-    if (servosBusy) {
-        taskEXIT_CRITICAL(&commandMutex);
-        Serial.println(F("Balance command ignored: Servos are busy."));
-        return;
-    }
-    servosBusy = true;
-    taskEXIT_CRITICAL(&commandMutex);
-
-    for (int i = 0; i < numStereoZones; i++) {
-        if (sender == &stereoZones[i].balanceEntity) {
-            stereoZones[i].currentBalance = number.toFloat();
-            sender->setState(number); 
-            if (initialSyncComplete) {
-                taskENTER_CRITICAL(&commandMutex);
+    auto action = [&]() {
+        for (int i = 0; i < numStereoZones; i++) {
+            if (sender == &stereoZones[i].balanceEntity) {
+                stereoZones[i].currentBalance = number.toFloat();
+                sender->setState(number);
                 updateStereoPairServos(stereoZones[i]);
-                lastActivityTime = millis();
-                taskEXIT_CRITICAL(&commandMutex);
+                break;
             }
-            break;
         }
-    }
+    };
+    processCommand(action);
 }
 
 void unifiedStereoMinAngleCallback(HANumeric number, HANumber* sender) {
     if (!number.isSet()) return;
-
-    taskENTER_CRITICAL(&commandMutex);
-    if (servosBusy) {
-        taskEXIT_CRITICAL(&commandMutex);
-        Serial.println(F("Min angle command ignored: Servos are busy."));
-        return;
-    }
-    servosBusy = true;
-    taskEXIT_CRITICAL(&commandMutex);
-
-    for (int i = 0; i < numStereoZones; i++) {
-        if (sender == &stereoZones[i].minAngleLeftEntity || sender == &stereoZones[i].minAngleRightEntity) {
-            taskENTER_CRITICAL(&commandMutex);
-            float newMin = number.toFloat();
-            sender->setState(number);
-            
-            preferences.begin("niles-ctrl", false);
-            if (sender == &stereoZones[i].minAngleLeftEntity) {
-                stereoZones[i].minAngleLeft = newMin;
-                char minKey[1];
-                snprintf(minKey, sizeof(minKey), "%s_min_angle_l", stereoZones[i].id);
-                preferences.putFloat(minKey, newMin);
-                Serial.printf("Saved new min angle for %s Left: %.1f\n", stereoZones[i].name, newMin);
-                moveServoToAngle(stereoZones[i].leftServo, newMin, "Left Calib");
-            } else { // Right
-                stereoZones[i].minAngleRight = newMin;
-                char minKey[1];
-                snprintf(minKey, sizeof(minKey), "%s_min_angle_r", stereoZones[i].id);
-                preferences.putFloat(minKey, newMin);
-                Serial.printf("Saved new min angle for %s Right: %.1f\n", stereoZones[i].name, newMin);
-                moveServoToAngle(stereoZones[i].rightServo, newMin, "Right Calib");
+    auto action = [&]() {
+        for (int i = 0; i < numStereoZones; i++) {
+            if (sender == &stereoZones[i].minAngleLeftEntity || sender == &stereoZones[i].minAngleRightEntity) {
+                float newMin = number.toFloat();
+                sender->setState(number);
+                
+                preferences.begin("niles-ctrl", false);
+                if (sender == &stereoZones[i].minAngleLeftEntity) {
+                    stereoZones[i].minAngleLeft = newMin;
+                    char key[32];
+                    snprintf(key, sizeof(key), "%s_min_angle_l", stereoZones[i].id);
+                    preferences.putFloat(key, newMin);
+                    Serial.printf("Saved new min angle for %s Left: %.1f\n", stereoZones[i].name, newMin);
+                    moveServoToAngle(stereoZones[i].leftServo, newMin, "Left Calib");
+                } else { // Right
+                    stereoZones[i].minAngleRight = newMin;
+                    char key[32];
+                    snprintf(key, sizeof(key), "%s_min_angle_r", stereoZones[i].id);
+                    preferences.putFloat(key, newMin);
+                    Serial.printf("Saved new min angle for %s Right: %.1f\n", stereoZones[i].name, newMin);
+                    moveServoToAngle(stereoZones[i].rightServo, newMin, "Right Calib");
+                }
+                preferences.end();
+                break;
             }
-            preferences.end();
-            lastActivityTime = millis();
-            taskEXIT_CRITICAL(&commandMutex);
-            break;
         }
-    }
+    };
+    processCommand(action);
 }
 
 void unifiedStereoMaxAngleCallback(HANumeric number, HANumber* sender) {
     if (!number.isSet()) return;
+    auto action = [&]() {
+        for (int i = 0; i < numStereoZones; i++) {
+            if (sender == &stereoZones[i].maxAngleLeftEntity || sender == &stereoZones[i].maxAngleRightEntity) {
+                float newMax = number.toFloat();
+                sender->setState(number);
 
-    taskENTER_CRITICAL(&commandMutex);
-    if (servosBusy) {
-        taskEXIT_CRITICAL(&commandMutex);
-        Serial.println(F("Max angle command ignored: Servos are busy."));
-        return;
-    }
-    servosBusy = true;
-    taskEXIT_CRITICAL(&commandMutex);
-
-    for (int i = 0; i < numStereoZones; i++) {
-        if (sender == &stereoZones[i].maxAngleLeftEntity || sender == &stereoZones[i].maxAngleRightEntity) {
-            taskENTER_CRITICAL(&commandMutex);
-            float newMax = number.toFloat();
-            sender->setState(number);
-
-            preferences.begin("niles-ctrl", false);
-            if (sender == &stereoZones[i].maxAngleLeftEntity) {
-                stereoZones[i].maxAngleLeft = newMax;
-                char maxKey[1];
-                snprintf(maxKey, sizeof(maxKey), "%s_max_angle_l", stereoZones[i].id);
-                preferences.putFloat(maxKey, newMax);
-                Serial.printf("Saved new max angle for %s Left: %.1f\n", stereoZones[i].name, newMax);
-                moveServoToAngle(stereoZones[i].leftServo, newMax, "Left Calib");
-            } else { // Right
-                stereoZones[i].maxAngleRight = newMax;
-                char maxKey[1];
-                snprintf(maxKey, sizeof(maxKey), "%s_max_angle_r", stereoZones[i].id);
-                preferences.putFloat(maxKey, newMax);
-                Serial.printf("Saved new max angle for %s Right: %.1f\n", stereoZones[i].name, newMax);
-                moveServoToAngle(stereoZones[i].rightServo, newMax, "Right Calib");
+                preferences.begin("niles-ctrl", false);
+                if (sender == &stereoZones[i].maxAngleLeftEntity) {
+                    stereoZones[i].maxAngleLeft = newMax;
+                    char key[32];
+                    snprintf(key, sizeof(key), "%s_max_angle_l", stereoZones[i].id);
+                    preferences.putFloat(key, newMax);
+                    Serial.printf("Saved new max angle for %s Left: %.1f\n", stereoZones[i].name, newMax);
+                    moveServoToAngle(stereoZones[i].leftServo, newMax, "Left Calib");
+                } else { // Right
+                    stereoZones[i].maxAngleRight = newMax;
+                    char key[32];
+                    snprintf(key, sizeof(key), "%s_max_angle_r", stereoZones[i].id);
+                    preferences.putFloat(key, newMax);
+                    Serial.printf("Saved new max angle for %s Right: %.1f\n", stereoZones[i].name, newMax);
+                    moveServoToAngle(stereoZones[i].rightServo, newMax, "Right Calib");
+                }
+                preferences.end();
+                break;
             }
-            preferences.end();
-            lastActivityTime = millis();
-            taskEXIT_CRITICAL(&commandMutex);
-            break;
         }
-    }
+    };
+    processCommand(action);
 }
 
 void unifiedMonoVolumeCallback(HANumeric number, HANumber* sender) {
     if (!number.isSet()) return;
-
-    taskENTER_CRITICAL(&commandMutex);
-    if (servosBusy) {
-        taskEXIT_CRITICAL(&commandMutex);
-        Serial.println(F("Mono volume command ignored: Servos are busy."));
-        return;
-    }
-    servosBusy = true;
-    taskEXIT_CRITICAL(&commandMutex);
-
-    for (int i = 0; i < numMonoZones; i++) {
-        if (sender == &monoZones[i].volumeEntity) {
-            monoZones[i].currentVolume = number.toFloat();
-            sender->setState(number);
-            if (initialSyncComplete) {
-                taskENTER_CRITICAL(&commandMutex);
+    auto action = [&]() {
+        for (int i = 0; i < numMonoZones; i++) {
+            if (sender == &monoZones[i].volumeEntity) {
+                monoZones[i].currentVolume = number.toFloat();
+                sender->setState(number);
                 updateMonoServo(monoZones[i]);
-                lastActivityTime = millis();
-                taskEXIT_CRITICAL(&commandMutex);
+                break;
             }
-            break;
         }
-    }
+    };
+    processCommand(action);
 }
 
 void unifiedMonoMinAngleCallback(HANumeric number, HANumber* sender) {
     if (!number.isSet()) return;
+    auto action = [&]() {
+        for (int i = 0; i < numMonoZones; i++) {
+            if (sender == &monoZones[i].minAngleEntity) {
+                float newMin = number.toFloat();
+                monoZones[i].minAngle = newMin;
+                sender->setState(number);
 
-    taskENTER_CRITICAL(&commandMutex);
-    if (servosBusy) {
-        taskEXIT_CRITICAL(&commandMutex);
-        Serial.println(F("Mono min angle command ignored: Servos are busy."));
-        return;
-    }
-    servosBusy = true;
-    taskEXIT_CRITICAL(&commandMutex);
-
-    for (int i = 0; i < numMonoZones; i++) {
-        if (sender == &monoZones[i].minAngleEntity) {
-            taskENTER_CRITICAL(&commandMutex);
-            float newMin = number.toFloat();
-            monoZones[i].minAngle = newMin;
-            sender->setState(number);
-
-            preferences.begin("niles-ctrl", false);
-            char minKey[4];
-            snprintf(minKey, sizeof(minKey), "%s_min_angle", monoZones[i].id);
-            preferences.putFloat(minKey, newMin);
-            preferences.end();
-            Serial.printf("Saved new min angle for %s: %.1f\n", monoZones[i].name, newMin);
-
-            moveServoToAngle(monoZones[i].servo, newMin, "Calib");
-            lastActivityTime = millis();
-            taskEXIT_CRITICAL(&commandMutex);
-            break;
+                preferences.begin("niles-ctrl", false);
+                char key[32];
+                snprintf(key, sizeof(key), "%s_min_angle", monoZones[i].id);
+                preferences.putFloat(key, newMin);
+                preferences.end();
+                Serial.printf("Saved new min angle for %s: %.1f\n", monoZones[i].name, newMin);
+                moveServoToAngle(monoZones[i].servo, newMin, "Calib");
+                break;
+            }
         }
-    }
+    };
+    processCommand(action);
 }
 
 void unifiedMonoMaxAngleCallback(HANumeric number, HANumber* sender) {
     if (!number.isSet()) return;
+    auto action = [&]() {
+        for (int i = 0; i < numMonoZones; i++) {
+            if (sender == &monoZones[i].maxAngleEntity) {
+                float newMax = number.toFloat();
+                monoZones[i].maxAngle = newMax;
+                sender->setState(number);
 
-    taskENTER_CRITICAL(&commandMutex);
-    if (servosBusy) {
-        taskEXIT_CRITICAL(&commandMutex);
-        Serial.println(F("Mono max angle command ignored: Servos are busy."));
-        return;
-    }
-    servosBusy = true;
-    taskEXIT_CRITICAL(&commandMutex);
-
-    for (int i = 0; i < numMonoZones; i++) {
-        if (sender == &monoZones[i].maxAngleEntity) {
-            taskENTER_CRITICAL(&commandMutex);
-            float newMax = number.toFloat();
-            monoZones[i].maxAngle = newMax;
-            sender->setState(number);
-
-            preferences.begin("niles-ctrl", false);
-            char maxKey[4];
-            snprintf(maxKey, sizeof(maxKey), "%s_max_angle", monoZones[i].id);
-            preferences.putFloat(maxKey, newMax);
-            preferences.end();
-            Serial.printf("Saved new max angle for %s: %.1f\n", monoZones[i].name, newMax);
-
-            moveServoToAngle(monoZones[i].servo, newMax, "Calib");
-            lastActivityTime = millis();
-            taskEXIT_CRITICAL(&commandMutex);
-            break;
+                preferences.begin("niles-ctrl", false);
+                char key[32];
+                snprintf(key, sizeof(key), "%s_max_angle", monoZones[i].id);
+                preferences.putFloat(key, newMax);
+                preferences.end();
+                Serial.printf("Saved new max angle for %s: %.1f\n", monoZones[i].name, newMax);
+                moveServoToAngle(monoZones[i].servo, newMax, "Calib");
+                break;
+            }
         }
-    }
+    };
+    processCommand(action);
 }
 
 void onMasterVolumeCommand(HANumeric number, HANumber* sender) {
-    if (!number.isSet() ||!initialSyncComplete) return;
-
-    taskENTER_CRITICAL(&commandMutex);
-    if (servosBusy) {
-        taskEXIT_CRITICAL(&commandMutex);
-        Serial.println(F("Master volume command ignored: Servos are busy."));
-        return;
-    }
-    servosBusy = true;
-    taskEXIT_CRITICAL(&commandMutex);
-
-    currentMasterVolume = number.toFloat();
-    sender->setState(number);
-    Serial.printf("Master Volume set to %.1f. Updating all servos.\n", currentMasterVolume);
-
-    
-    taskENTER_CRITICAL(&commandMutex);
-    for (int i = 0; i < numStereoZones; i++) {
-        updateStereoPairServos(stereoZones[i]);
-    }
-    for (int i = 0; i < numMonoZones; i++) {
-        updateMonoServo(monoZones[i]);
-    }
-    lastActivityTime = millis();
-    taskEXIT_CRITICAL(&commandMutex);
+    if (!number.isSet()) return;
+    auto action = [&]() {
+        currentMasterVolume = number.toFloat();
+        sender->setState(number);
+        Serial.printf("Master Volume set to %.1f. Updating all servos.\n", currentMasterVolume);
+        updateAllServoTargets(); // <-- FIX 2/3: Renamed function call
+    };
+    processCommand(action);
 }
 
 // =====================================================================================================================
 // --- Helper Functions ---
 // =====================================================================================================================
 
+// <-- FIX 3/3: Renamed function definition
+void updateAllServoTargets() {
+    for (int i = 0; i < numStereoZones; i++) {
+        updateStereoPairServos(stereoZones[i]);
+    }
+    for (int i = 0; i < numMonoZones; i++) {
+        updateMonoServo(monoZones[i]);
+    }
+}
+
 void updateStereoPairServos(StereoZone& zone) {
-    Serial.printf("Updating pair '%s': Vol=%.1f, Bal=%.1f\n", zone.name, zone.currentVolume, zone.currentBalance);
+    float leftVol = zone.currentVolume;
+    float rightVol = zone.currentVolume;
 
-    float masterMultiplier = currentMasterVolume / HA_VOLUME_MAX;
-    float effectiveVolume = zone.currentVolume * masterMultiplier;
-
-    float baseAngleLeft = map(effectiveVolume, HA_VOLUME_MIN, HA_VOLUME_MAX, zone.minAngleLeft, zone.maxAngleLeft);
-    float baseAngleRight = map(effectiveVolume, HA_VOLUME_MIN, HA_VOLUME_MAX, zone.minAngleRight, zone.maxAngleRight);
-
-    float leftMultiplier = 1.0, rightMultiplier = 1.0;
-    if (zone.currentBalance > 0) { // Balance to the right
-        leftMultiplier = map(zone.currentBalance, 0, HA_BALANCE_MAX, 1.0, 0.0);
-    } else if (zone.currentBalance < 0) { // Balance to the left
-        rightMultiplier = map(zone.currentBalance, 0, HA_BALANCE_MIN, 1.0, 0.0);
+    // 1. Apply Balance
+    if (zone.currentBalance > 0) { // Balance to the right, attenuate left
+        leftVol *= map(zone.currentBalance, 0, HA_BALANCE_MAX, 1.0, 0.0);
+    } else if (zone.currentBalance < 0) { // Balance to the left, attenuate right
+        rightVol *= map(zone.currentBalance, 0, HA_BALANCE_MIN, 1.0, 0.0);
     }
 
-    moveServoToAngle(zone.leftServo, baseAngleLeft * leftMultiplier, "Left");
-    moveServoToAngle(zone.rightServo, baseAngleRight * rightMultiplier, "Right");
+    // 2. Apply Master Volume
+    float masterMultiplier = currentMasterVolume / HA_VOLUME_MAX;
+    leftVol *= masterMultiplier;
+    rightVol *= masterMultiplier;
+
+    leftVol = constrain(leftVol, HA_VOLUME_MIN, HA_VOLUME_MAX);
+    rightVol = constrain(rightVol, HA_VOLUME_MIN, HA_VOLUME_MAX);
+    
+    Serial.printf("Updating '%s': Vol=%.1f, Bal=%.1f, Master=%.1f -> EffVol L:%.1f R:%.1f\n",
+                  zone.name, zone.currentVolume, zone.currentBalance, currentMasterVolume, leftVol, rightVol);
+
+    // 3. Map final volumes to their respective angle ranges
+    float targetAngleLeft = map(leftVol, HA_VOLUME_MIN, HA_VOLUME_MAX, zone.minAngleLeft, zone.maxAngleLeft);
+    float targetAngleRight = map(rightVol, HA_VOLUME_MIN, HA_VOLUME_MAX, zone.minAngleRight, zone.maxAngleRight);
+
+    moveServoToAngle(zone.leftServo, targetAngleLeft, "Left");
+    moveServoToAngle(zone.rightServo, targetAngleRight, "Right");
 }
 
 void updateMonoServo(MonoZone& zone) {
-    Serial.printf("Updating mono '%s': Vol=%.1f, MinAng=%.1f, MaxAng=%.1f\n",
-                  zone.name, zone.currentVolume, zone.minAngle, zone.maxAngle);
-
     float masterMultiplier = currentMasterVolume / HA_VOLUME_MAX;
     float effectiveVolume = zone.currentVolume * masterMultiplier;
+    effectiveVolume = constrain(effectiveVolume, HA_VOLUME_MIN, HA_VOLUME_MAX);
+
+    Serial.printf("Updating mono '%s': Vol=%.1f -> EffVol=%.1f\n", zone.name, zone.currentVolume, effectiveVolume);
 
     float targetAngle = map(effectiveVolume, HA_VOLUME_MIN, HA_VOLUME_MAX, zone.minAngle, zone.maxAngle);
     moveServoToAngle(zone.servo, targetAngle, zone.name);
 }
 
 void moveServoToAngle(ServoEasing& servo, float targetAngle, const char* name) {
-    // Assumes lock is already held by calling function
+    taskENTER_CRITICAL(&commandMutex);
     if (servosAreSleeping) {
         wakeUpServos();
     }
-    lastActivityTime = millis(); // Update activity time on any move command
-
     targetAngle = constrain(targetAngle, HA_CALIBRATION_ANGLE_MIN, HA_CALIBRATION_ANGLE_MAX);
+    taskEXIT_CRITICAL(&commandMutex);
 
     Serial.printf("  > Moving %s servo to angle %.1f\n", name, targetAngle);
     servo.startEaseTo(targetAngle, SERVO_SPEED_DPS, START_UPDATE_BY_INTERRUPT);
@@ -657,7 +590,8 @@ void setupHaNumber(HANumber& number, const char* name, const char* icon, float m
     number.setMax(maxVal);
     number.setStep(step);
     number.setMode(HANumber::ModeSlider);
-    number.setRetain(false); 
+    // Setting retain to true gives a better user experience.
+    number.setRetain(true); 
 }
 
 void connectWiFi() {
@@ -682,15 +616,8 @@ void connectWiFi() {
     Serial.println(WiFi.localIP());
 }
 
-void checkConnections() {
-    if (WiFi.status()!= WL_CONNECTED) {
-        Serial.println(F("WiFi connection lost! Rebooting..."));
-        delay(1000);
-        ESP.restart();
-    }
-}
-
 void wakeUpServos() {
+    // This function is only called from within a critical section
     if (!servosAreSleeping) return;
     Serial.println(F("Waking up servos..."));
 
