@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(powershell:*)",
+      "Bash(del \"D:\\\\projects\\\\esp32\\\\esp-simple\\\\fetch_ha.ps1\" \"D:\\\\projects\\\\esp32\\\\esp-simple\\\\fetch_zha.ps1\" \"D:\\\\projects\\\\esp32\\\\esp-simple\\\\fetch_ieee.ps1\" \"D:\\\\projects\\\\esp32\\\\esp-simple\\\\push_automations.ps1\" \"D:\\\\projects\\\\esp32\\\\esp-simple\\\\push_automations2.ps1\" \"D:\\\\projects\\\\esp32\\\\esp-simple\\\\verify_automations.ps1\")"
+    ]
+  }
+}
