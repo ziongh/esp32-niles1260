@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <Wire.h>
 #include <ArduinoHA.h>
 #include <Preferences.h>
@@ -161,6 +162,8 @@ bool wasMqttConnected = false;
 bool wifiWasConnected = true;
 bool safeMode = false;
 bool rebootCounterCleared = false;
+unsigned long wifiDisconnectedSince = 0;
+const unsigned long WIFI_FORCE_RECONNECT_MS = 30000;
 
 // Mutex for critical sections
 portMUX_TYPE commandMutex = portMUX_INITIALIZER_UNLOCKED;
@@ -305,6 +308,7 @@ void setup() {
     setupHaNumber(masterVolume, "Master Volume", "mdi:volume-vibrate", HA_VOLUME_MIN, HA_VOLUME_MAX, 1);
     masterVolume.onCommand(onMasterVolumeCommand);
 
+    wifiClient.setNoDelay(true);
     Serial.println(F("Connecting to MQTT broker..."));
     mqtt.begin(MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASSWORD);
 }
@@ -312,13 +316,23 @@ void setup() {
 void loop() {
     mqtt.loop();
 
-    // WiFi disconnect monitoring
+    // WiFi disconnect monitoring with forced reconnection
     bool wifiConnected = (WiFi.status() == WL_CONNECTED);
     if (!wifiConnected && wifiWasConnected) {
         Serial.println(F("WiFi disconnected! Waiting for auto-reconnect..."));
+        wifiDisconnectedSince = millis();
     } else if (wifiConnected && !wifiWasConnected) {
         Serial.print(F("WiFi reconnected. IP: "));
         Serial.println(WiFi.localIP());
+        esp_wifi_set_ps(WIFI_PS_NONE);
+        wifiDisconnectedSince = 0;
+    } else if (!wifiConnected && !wifiWasConnected && wifiDisconnectedSince > 0 &&
+               (millis() - wifiDisconnectedSince > WIFI_FORCE_RECONNECT_MS)) {
+        Serial.println(F("WiFi auto-reconnect failed. Forcing reconnect cycle..."));
+        WiFi.disconnect();
+        delay(100);
+        WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+        wifiDisconnectedSince = millis();
     }
     wifiWasConnected = wifiConnected;
 
@@ -332,8 +346,6 @@ void loop() {
         Serial.println(F("MQTT connected. Entering sync phase..."));
         startupPhase = PHASE_SYNCING;
         mqttConnectedTime = millis();
-        mqtt.publish("homeassistant/status", "online", true);
-        Serial.println(F("Discovery re-announcement sent."));
     }
     wasMqttConnected = mqttConnected;
 
@@ -360,21 +372,25 @@ void loop() {
 
         case PHASE_STARTUP_MOVE: {
             // Publish post-sync state to HA (merged NVS defaults + MQTT retained updates)
-            Serial.println(F("Publishing post-sync states to HA..."));
+            // Force re-publish all states to HA (force=true bypasses ArduinoHA's
+            // deduplication, ensuring states reach the broker even if values haven't
+            // changed since last publish — critical after MQTT reconnection when the
+            // broker may have lost retained messages)
+            Serial.println(F("Force-publishing post-sync states to HA..."));
             for (int i = 0; i < numStereoZones; i++) {
-                stereoZones[i].volumeEntity.setState(stereoZones[i].currentVolume);
-                stereoZones[i].balanceEntity.setState(stereoZones[i].currentBalance);
-                stereoZones[i].minAngleLeftEntity.setState(stereoZones[i].minAngleLeft);
-                stereoZones[i].maxAngleLeftEntity.setState(stereoZones[i].maxAngleLeft);
-                stereoZones[i].minAngleRightEntity.setState(stereoZones[i].minAngleRight);
-                stereoZones[i].maxAngleRightEntity.setState(stereoZones[i].maxAngleRight);
+                stereoZones[i].volumeEntity.setState(stereoZones[i].currentVolume, true);
+                stereoZones[i].balanceEntity.setState(stereoZones[i].currentBalance, true);
+                stereoZones[i].minAngleLeftEntity.setState(stereoZones[i].minAngleLeft, true);
+                stereoZones[i].maxAngleLeftEntity.setState(stereoZones[i].maxAngleLeft, true);
+                stereoZones[i].minAngleRightEntity.setState(stereoZones[i].minAngleRight, true);
+                stereoZones[i].maxAngleRightEntity.setState(stereoZones[i].maxAngleRight, true);
             }
             for (int i = 0; i < numMonoZones; i++) {
-                monoZones[i].volumeEntity.setState(monoZones[i].currentVolume);
-                monoZones[i].minAngleEntity.setState(monoZones[i].minAngle);
-                monoZones[i].maxAngleEntity.setState(monoZones[i].maxAngle);
+                monoZones[i].volumeEntity.setState(monoZones[i].currentVolume, true);
+                monoZones[i].minAngleEntity.setState(monoZones[i].minAngle, true);
+                monoZones[i].maxAngleEntity.setState(monoZones[i].maxAngle, true);
             }
-            masterVolume.setState(currentMasterVolume);
+            masterVolume.setState(currentMasterVolume, true);
 
             // Transition to RUNNING so moveServoToAngle will execute
             startupPhase = PHASE_RUNNING;
@@ -425,6 +441,8 @@ void loop() {
             break;
         }
     }
+
+    delay(1); // Yield to FreeRTOS WiFi/TCP background tasks
 }
 
 // =====================================================================================================================
@@ -774,6 +792,10 @@ void connectWiFi() {
     }
     Serial.print(F("\nWiFi Connected! IP: "));
     Serial.println(WiFi.localIP());
+
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    WiFi.setTxPower(WIFI_POWER_19_5dBm);
+    Serial.println(F("WiFi power saving disabled, TX power set to max."));
 }
 
 void wakeUpServos() {

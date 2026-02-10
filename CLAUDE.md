@@ -142,6 +142,25 @@ Volumes and calibration angles are stored in NVS (namespace: `niles-ctrl`):
 - **After `detach()`, internal state is lost** — re-attaching requires providing the initial angle again.
 - **PCA9685 resolution** — 4096 steps per 20ms frame, approximately 0.5 degree precision for a 270-degree range.
 
+## Network Stability (v7.4.0)
+
+The device runs 24/7. Several measures prevent MQTT/WiFi disconnections that cause HA entities to show NaN:
+
+### Build flags
+
+- **`MQTT_KEEPALIVE=60`** in `platformio.ini` — overrides PubSubClient's default 15s keepalive at compile time. The 15s default is too aggressive: any `loop()` hiccup longer than 15s causes the broker to consider the client dead. 60s gives ample headroom. This must be a compile-time `-D` flag because PubSubClient uses `#ifndef MQTT_KEEPALIVE`.
+
+### WiFi hardening (`connectWiFi()` + `loop()`)
+
+- **`esp_wifi_set_ps(WIFI_PS_NONE)`** — disables WiFi modem sleep. ESP32 modem sleep powers down the radio between AP beacons, causing packet loss over time on always-on devices. Re-applied on reconnect.
+- **`WiFi.setTxPower(WIFI_POWER_19_5dBm)`** — max TX power for better signal margin.
+- **Forced WiFi reconnection** — `WiFi.setAutoReconnect(true)` is unreliable for prolonged disconnections. After 30s without reconnection (`WIFI_FORCE_RECONNECT_MS`), the loop forces a `WiFi.disconnect()` + `WiFi.begin()` cycle. Does NOT call `ESP.restart()` to avoid triggering the safe mode reboot counter.
+
+### TCP / main loop
+
+- **`wifiClient.setNoDelay(true)`** — disables Nagle's algorithm so MQTT PINGREQ/PINGRESP packets go out immediately instead of being buffered up to 200ms.
+- **`delay(1)` at end of `loop()`** — yields CPU to the FreeRTOS scheduler, allowing WiFi/TCP background tasks to process. Feeds the task watchdog. No impact on servo easing (runs via hardware timer interrupt).
+
 ## Security Note
 
 `factory_settings.ini` contains WiFi, MQTT, and admin credentials as compile-time defines. This file should not be committed to public repositories.
