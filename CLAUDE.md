@@ -278,3 +278,9 @@ Content-Type: application/json
 ```
 
 This returns the ZHA IEEE address for each knob device.
+
+# Home assistant API key and host:
+
+- Host: homeassistant.local
+- API key: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiIzYTQ2YWY3YThiZDY0OTRlOGM1ZmIwMDUzOWY3Y2FmNyIsImlhdCI6MTc3MDczNjc1OCwiZXhwIjoyMDg2MDk2NzU4fQ.H0GGE5c-qquOoRdyvQY4QqIfhkwYdMPTut1wAALVHcE`
+
